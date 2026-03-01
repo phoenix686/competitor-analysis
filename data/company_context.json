@@ -1,0 +1,81 @@
+{
+  "company": "SwiftMart",
+  "description": "Quick-commerce platform offering 10-minute grocery and essentials delivery",
+  "markets": {
+    "delhi": {
+      "market_share": 0.67,
+      "monthly_orders": 2100000,
+      "avg_delivery_time_min": 11,
+      "key_strength": "largest dark store network"
+    },
+    "bangalore": {
+      "market_share": 0.54,
+      "monthly_orders": 1800000,
+      "avg_delivery_time_min": 10,
+      "key_strength": "tech-savvy user base, high retention"
+    },
+    "mumbai": {
+      "market_share": 0.41,
+      "monthly_orders": 1500000,
+      "avg_delivery_time_min": 13,
+      "key_strength": "premium segment dominance"
+    },
+    "hyderabad": {
+      "market_share": 0.29,
+      "monthly_orders": 800000,
+      "avg_delivery_time_min": 14,
+      "key_strength": "growing, recent expansion"
+    }
+  },
+  "pricing": {
+    "delivery_fee_base": 25,
+    "free_delivery_threshold": 199,
+    "surge_multiplier": 1.4,
+    "subscription_name": "SwiftPass",
+    "subscription_price_monthly": 149,
+    "subscription_price_annual": 999
+  },
+  "product": {
+    "categories": ["groceries", "snacks", "beverages", "personal_care", "dairy", "fruits_vegetables"],
+    "avg_skus": 8000,
+    "private_label_brands": ["SwiftFresh", "QuickBite"]
+  },
+  "roadmap": [
+    "10-minute delivery expansion to Pune Q2 2026",
+    "Real-time inventory visibility feature Q2 2026",
+    "SwiftPass family plan Q3 2026",
+    "B2B quick commerce pilot Q3 2026"
+  ],
+  "known_vulnerabilities": [
+    "Weaker presence in tier-2 cities",
+    "No in-app restaurant ordering (unlike Zomato)",
+    "Subscription retention drops after 3 months"
+  ],
+  "competitors": {
+    "zomato": {
+      "primary_threat": "Blinkit integration gives delivery + food ordering bundle",
+      "strong_markets": ["delhi", "mumbai"],
+      "estimated_market_share_overlap": 0.45
+    },
+    "blinkit": {
+      "primary_threat": "Aggressive pricing in Delhi, our strongest market",
+      "strong_markets": ["delhi", "ncr"],
+      "estimated_market_share_overlap": 0.61
+    },
+    "zepto": {
+      "primary_threat": "Fastest growing in Bangalore, targeting our base",
+      "strong_markets": ["bangalore", "chennai"],
+      "estimated_market_share_overlap": 0.38
+    },
+    "amazon_fresh": {
+      "primary_threat": "Prime bundle loyalty, deeper SKU catalog",
+      "strong_markets": ["mumbai", "bangalore"],
+      "estimated_market_share_overlap": 0.29
+    },
+    "instamart": {
+      "primary_threat": "Swiggy ecosystem integration drives cross-sell",
+      "strong_markets": ["bangalore", "hyderabad"],
+      "estimated_market_share_overlap": 0.33
+    }
+  }
+}

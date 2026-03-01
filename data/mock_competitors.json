@@ -1,0 +1,44 @@
+{
+  "competitors": {
+    "zomato": {
+      "full_name": "Zomato / Blinkit",
+      "pricing_page": "https://www.zomato.com/",
+      "app_store_id": "com.application.zomato",
+      "jobs_search_term": "Zomato",
+      "headquarters": "Gurugram",
+      "founded": 2008
+    },
+    "blinkit": {
+      "full_name": "Blinkit (Grofers)",
+      "pricing_page": "https://blinkit.com/",
+      "app_store_id": "com.grofers.customerapp",
+      "jobs_search_term": "Blinkit",
+      "headquarters": "Gurugram",
+      "founded": 2013
+    },
+    "zepto": {
+      "full_name": "Zepto",
+      "pricing_page": "https://www.zepto.com/",
+      "app_store_id": "com.zepto.app",
+      "jobs_search_term": "Zepto",
+      "headquarters": "Mumbai",
+      "founded": 2021
+    },
+    "amazon_fresh": {
+      "full_name": "Amazon Fresh India",
+      "pricing_page": "https://www.amazon.in/fresh",
+      "app_store_id": "in.amazon.mShop.android.shopping",
+      "jobs_search_term": "Amazon Fresh India",
+      "headquarters": "Bangalore",
+      "founded": 2020
+    },
+    "instamart": {
+      "full_name": "Swiggy Instamart",
+      "pricing_page": "https://www.swiggy.com/instamart",
+      "app_store_id": "bundle.swiggy.in",
+      "jobs_search_term": "Swiggy Instamart",
+      "headquarters": "Bangalore",
+      "founded": 2020
+    }
+  }
+}
