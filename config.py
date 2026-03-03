@@ -5,8 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # LLM
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GEMINI_MODEL = "gemini-2.0-flash"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # LangSmith observability
 LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true")
@@ -21,8 +20,9 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 MIN_CONFIDENCE_SCORE = 6.0
 MAX_TOOL_RETRIES = 3
 
+#"zepto", "amazon_fresh", "instamart"
 # Competitors
-COMPETITORS = ["zomato", "blinkit", "zepto", "amazon_fresh", "instamart"]
+COMPETITORS = ["zomato", "blinkit", ]
 
 # Competitor app IDs (Play Store)
 COMPETITOR_APP_IDS = {

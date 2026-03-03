@@ -1,0 +1,23 @@
+{
+    "query": "Blinkit delivery fee India 2026",
+    "results": [
+        {
+            "url": "https://economictimes.indiatimes.com/tech/startups/blinkit-slashes-delivery-fee",
+            "title": "Blinkit slashes delivery fee to ₹0 in Delhi, Gurgaon for orders above ₹149",
+            "content": "Blinkit, Zomato's quick commerce arm, has cut its delivery fee to zero for orders above ₹149 across Delhi NCR and Gurgaon effective February 2026. The company cited rising competition from Zepto and SwiftMart as reasons for the move. Blinkit's current basket average is ₹340. CEO Albinder Dhindsa confirmed the change on X, saying the decision was driven by 'long-term customer loyalty over short-term margins'.",
+            "score": 0.91
+        },
+        {
+            "url": "https://inc42.com/buzz/blinkit-pricing-strategy-2026",
+            "title": "Blinkit's aggressive pricing: Can it sustain ₹0 delivery fees?",
+            "content": "Industry analysts question Blinkit's profitability outlook after its delivery fee cut. The company reported a unit economics improvement in Q3 FY26 but the new pricing may push it back into losses. Blinkit controls approximately 42% of Delhi NCR's q-commerce market.",
+            "score": 0.83
+        },
+        {
+            "url": "https://thehindu.com/business/blinkit-zepto-price-war",
+            "title": "Price wars heat up in India's quick commerce sector",
+            "content": "Blinkit and Zepto are engaged in a delivery fee price war in Delhi and Bangalore. Zepto recently introduced 'Zepto Pass' at ₹99/month offering unlimited free delivery, directly competing with SwiftMart's SwiftPass at ₹149/month.",
+            "score": 0.78
+        }
+    ]
+}

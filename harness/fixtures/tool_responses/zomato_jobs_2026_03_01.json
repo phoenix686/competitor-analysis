@@ -1,0 +1,47 @@
+{
+    "company": "Zomato",
+    "total_open_roles": 8,
+    "jobs": [
+        {
+            "title": "Senior ML Engineer — Recommendations",
+            "description": "Build next-gen personalization models for Blinkit's product feed. Work on real-time ranking and CTR optimization.",
+            "created": "2026-02-28"
+        },
+        {
+            "title": "Staff Data Scientist — Supply Chain",
+            "description": "Optimize dark store inventory placement and demand forecasting using ML. Focus on reducing wastage and stockouts.",
+            "created": "2026-02-27"
+        },
+        {
+            "title": "City Operations Lead — Pune",
+            "description": "Lead ground-up launch of Blinkit operations in Pune. Manage dark store setup, rider onboarding, and local vendor contracts.",
+            "created": "2026-02-25"
+        },
+        {
+            "title": "City Operations Lead — Ahmedabad",
+            "description": "Own Blinkit's entry into Ahmedabad. End-to-end responsibility from dark store location scouting to go-live.",
+            "created": "2026-02-24"
+        },
+        {
+            "title": "Senior Product Manager — Loyalty",
+            "description": "Own Blinkit Club loyalty programme product roadmap. Define retention mechanics and subscription tier strategy.",
+            "created": "2026-02-22"
+        },
+        {
+            "title": "Growth Marketing Manager",
+            "description": "Drive customer acquisition campaigns in Tier 2 cities. Own performance marketing budgets and OEM partnerships.",
+            "created": "2026-02-20"
+        },
+        {
+            "title": "Backend Engineer — Payments",
+            "description": "Build payment infrastructure for Blinkit's B2B commerce vertical. BNPL integrations and merchant payouts.",
+            "created": "2026-02-18"
+        },
+        {
+            "title": "Legal Counsel — Regulatory Affairs",
+            "description": "Handle compliance for quick commerce operations across new city launches. FSSAI and state-level regulatory liaising.",
+            "created": "2026-02-15"
+        }
+    ],
+    "note": "Analyze the distribution of job titles to infer strategic priorities"
+}

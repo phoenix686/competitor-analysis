@@ -1,0 +1,1 @@
+{"run_id": "f34059c9", "signals_collected": 4, "signals_analyzed": 4, "threats": 2, "opportunities": 0, "neutral": 2, "avg_confidence": 8.0, "avg_impact_score": 6.75, "competitors_covered": ["zomato", "blinkit"], "retry_count": 0, "failed_tools": [], "tool_calls": 8, "timestamp": "2026-03-03T04:02:32Z", "latency_ms": 13271.5}
