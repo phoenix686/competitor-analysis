@@ -23,3 +23,6 @@ class CompeteIQState(TypedDict):
     # Run metadata
     run_id: str
     errors: list[str]
+
+    # Memory context injected by Orchestrator (episodic + semantic summaries)
+    memory_context: str

@@ -19,6 +19,8 @@ from prompts.constants import (
     ANALYSIS_SYSTEM,
     BRIEF_SYSTEM,
 )
+from memory.episodic import get_recent_runs, format_episodic_context, save_run
+from memory.semantic import retrieve_similar, format_semantic_context, upsert_signals
 
 # Tools setup
 tools = [search_competitor, get_app_reviews, get_competitor_jobs]
@@ -34,15 +36,21 @@ llm_analyzer = llm.with_structured_output(AnalyzedSignalList)
 @traceable(name="orchestrator", run_type="chain", tags=["competeiq"])
 @traced_node("orchestrator")
 def orchestrator(state: CompeteIQState) -> CompeteIQState:
+    # Pull last 5 run summaries from Redis for context priming
+    recent_runs = get_recent_runs(5)
+    memory_ctx = format_episodic_context(recent_runs)
+
     system = SystemMessage(content=ORCHESTRATOR_SYSTEM)
-    human = HumanMessage(
-        content=f"Start competitive monitoring run for: {state['competitors']}"
-    )
+    human = HumanMessage(content=(
+        f"Start competitive monitoring run for: {state['competitors']}\n\n"
+        f"{memory_ctx}"
+    ))
     response = llm.invoke([system, human])
     return {
         **state,
         "messages": [response],
-        "run_id": str(uuid.uuid4())[:8]
+        "run_id": str(uuid.uuid4())[:8],
+        "memory_context": memory_ctx,
     }
 
 
@@ -112,15 +120,29 @@ def analysis_agent(state: CompeteIQState) -> CompeteIQState:
     if not state["raw_signals"]:
         return {**state, "analyzed_signals": []}
 
+    # Build a short query from the first 3 signal descriptions for semantic lookup
+    sample_descs = " ".join(
+        s.get("description", "") for s in state["raw_signals"][:3]
+    )
+    similar = retrieve_similar(sample_descs, k=3)
+    semantic_ctx = format_semantic_context(similar)
+
+    # Truncate raw signals to keep total input under 4000 tokens
+    raw_json = json.dumps(state["raw_signals"], indent=2)[:3000]
+
     structured_response = llm_analyzer.invoke([
         SystemMessage(content=ANALYSIS_SYSTEM),
-        HumanMessage(content=f"""
-Analyze these signals for SwiftMart:
-{json.dumps(state['raw_signals'], indent=2)}
-""")
+        HumanMessage(content=(
+            f"Historical context:\n{semantic_ctx}\n\n"
+            f"Analyze these signals for SwiftMart:\n{raw_json}"
+        ))
     ])
 
     analyzed_signals = [s.model_dump() for s in structured_response.signals]
+
+    # Persist to ChromaDB so future runs can retrieve similar signals
+    run_id = state.get("run_id", "unknown")
+    upsert_signals(analyzed_signals, run_id)
 
     return {
         **state,

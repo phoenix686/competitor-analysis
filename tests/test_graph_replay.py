@@ -18,6 +18,7 @@ INITIAL_STATE = {
     "final_brief": "",
     "run_id": "",
     "errors": [],
+    "memory_context": "",
 }
 
 

@@ -43,3 +43,8 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 # LLM settings
 TEMPERATURE = 0
+
+# LLM provider toggle — set via env var or --provider CLI flag in main.py
+# "ollama"  → local llama3.2:1b via Ollama (default, no rate limits)
+# "groq"    → cloud llama-3.3-70b-versatile via Groq API
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
