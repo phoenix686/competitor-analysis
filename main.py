@@ -1,4 +1,5 @@
 # main.py
+import asyncio
 import time
 from graph.workflow import competeiq_graph
 from config import COMPETITORS
@@ -7,7 +8,7 @@ from memory.episodic import save_run
 from utils.observability import compute_run_metrics
 
 
-def run() -> None:
+async def run() -> None:
     print("Starting CompeteIQ monitoring run... [LLM: Groq llama-3.3-70b-versatile]\n")
 
     initial_state = {
@@ -24,11 +25,14 @@ def run() -> None:
         "retry_count": 0,
         "tool_call_count": 0,
         "current_competitor": "",
+        # Phase 5: self-correction
         "reflection_count": 0,
+        # Phase 6: per-node latency tracking
+        "node_latencies": {},
     }
 
     t0 = time.perf_counter()
-    result = competeiq_graph.invoke(initial_state)
+    result = await competeiq_graph.ainvoke(initial_state)
     latency_ms = (time.perf_counter() - t0) * 1000
 
     print("=" * 60)
@@ -40,9 +44,15 @@ def run() -> None:
     print(f"Retry count       : {result.get('retry_count', 0)}")
     print(f"Total latency     : {latency_ms:.0f}ms")
 
+    node_latencies = result.get("node_latencies") or {}
+    if node_latencies:
+        print("\nPer-node latencies:")
+        for node, ms in sorted(node_latencies.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {node:<30} {ms:>7.0f}ms")
+
     # Off-critical-path logging
     log_run(result, latency_ms=latency_ms)
-    print("Run logged to data/run_log.jsonl")
+    print("\nRun logged to data/run_log.jsonl")
 
     metrics = compute_run_metrics(result)
     metrics["latency_ms"] = round(latency_ms, 1)
@@ -51,4 +61,4 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    asyncio.run(run())

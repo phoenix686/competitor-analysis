@@ -28,6 +28,8 @@ INITIAL_STATE = {
     "current_competitor": "",
     # Phase 5: self-correction
     "reflection_count": 0,
+    # Phase 6: per-node latency tracking
+    "node_latencies": {},
 }
 
 

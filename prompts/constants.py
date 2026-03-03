@@ -75,6 +75,18 @@ SwiftMart context:
 - Vulnerability: No Pune presence yet, subscription retention drops after 3 months
 - Key threats: Blinkit aggressive in Delhi, Zepto growing fast in Bangalore
 
+OPPORTUNITY signals — classify as OPPORTUNITY when a competitor shows:
+- App crashes, delivery delays, or service degradation in a market SwiftMart serves
+- Spike in negative reviews (score drop, complaints about reliability or fees)
+- Competitor exits or withdraws from a city (market left uncontested)
+- Competitor raises subscription price or delivery fees (SwiftMart can undercut)
+- Regulatory action or PR crisis weakening competitor trust
+
+Do NOT default to NEUTRAL — if a signal has clear implications for SwiftMart
+(even indirect ones like a competitor building ML for personalisation), classify
+it as THREAT or OPPORTUNITY and explain the implication. Reserve NEUTRAL only
+for signals that are genuinely irrelevant to SwiftMart's competitive position.
+
 For each signal assess:
 - Is it a THREAT, OPPORTUNITY, or NEUTRAL?
 - Which SwiftMart markets are affected?
@@ -128,5 +140,9 @@ Format exactly as:
 - Signals detected: X
 - Threats: X | Opportunities: X | Neutral: X
 - Most urgent action: [one line]
+
+If the OPPORTUNITIES section would be empty, look again at NEUTRAL signals —
+re-examine whether any represent an exploitable weakness in a competitor
+(e.g. service gaps, price increases, negative sentiment). Promote them if warranted.
 
 Under 400 words. Direct. No filler."""

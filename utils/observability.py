@@ -12,9 +12,11 @@ Usage:
 
     Apply @traceable ABOVE @traced_node. traced_node handles timing and error
     logging; @traceable creates the LangSmith span around the full wrapper.
+    Works with both sync and async node functions.
 """
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import time
@@ -28,11 +30,21 @@ logging.basicConfig(
 )
 
 
-# Node timing / error-logging decorator
+def _inject_latency(result: dict, name: str, elapsed_ms: float) -> dict:
+    """Merge per-node timing into the result dict returned to LangGraph."""
+    if isinstance(result, dict):
+        latencies = dict(result.get("node_latencies") or {})
+        latencies[name] = round(elapsed_ms, 1)
+        result["node_latencies"] = latencies
+    return result
+
+
+# Node timing / error-logging decorator — supports both sync and async nodes
 def traced_node(name: str):
     """
-    Decorator that adds wall-clock latency logging and clean error surfacing
-    to a LangGraph node function.
+    Decorator that adds wall-clock latency logging, clean error surfacing,
+    and per-node timing (written to state["node_latencies"]) to a LangGraph
+    node function.
 
     Pair with @traceable (from langsmith) applied ABOVE this decorator so the
     LangSmith span wraps the full timed execution:
@@ -40,22 +52,41 @@ def traced_node(name: str):
         @traceable(name="my_node", run_type="chain", tags=["competeiq"])
         @traced_node("my_node")
         def my_node(state): ...
+
+        # async nodes work identically:
+        @traceable(name="my_async_node", run_type="chain", tags=["competeiq"])
+        @traced_node("my_async_node")
+        async def my_async_node(state): ...
     """
     def decorator(fn: Callable) -> Callable:
-        @functools.wraps(fn)
-        def wrapper(state: dict) -> dict:
-            t0 = time.perf_counter()
-            try:
-                result = fn(state)
-                elapsed_ms = (time.perf_counter() - t0) * 1000
-                logger.info("✅ [%s] completed in %.0fms", name, elapsed_ms)
-                return result
-            except Exception as exc:
-                elapsed_ms = (time.perf_counter() - t0) * 1000
-                logger.error("❌ [%s] failed after %.0fms — %s", name, elapsed_ms, exc)
-                raise
-
-        return wrapper
+        if asyncio.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def async_wrapper(state: dict) -> dict:
+                t0 = time.perf_counter()
+                try:
+                    result = await fn(state)
+                    elapsed_ms = (time.perf_counter() - t0) * 1000
+                    logger.info("✅ [%s] completed in %.0fms", name, elapsed_ms)
+                    return _inject_latency(result, name, elapsed_ms)
+                except Exception as exc:
+                    elapsed_ms = (time.perf_counter() - t0) * 1000
+                    logger.error("❌ [%s] failed after %.0fms — %s", name, elapsed_ms, exc)
+                    raise
+            return async_wrapper
+        else:
+            @functools.wraps(fn)
+            def sync_wrapper(state: dict) -> dict:
+                t0 = time.perf_counter()
+                try:
+                    result = fn(state)
+                    elapsed_ms = (time.perf_counter() - t0) * 1000
+                    logger.info("✅ [%s] completed in %.0fms", name, elapsed_ms)
+                    return _inject_latency(result, name, elapsed_ms)
+                except Exception as exc:
+                    elapsed_ms = (time.perf_counter() - t0) * 1000
+                    logger.error("❌ [%s] failed after %.0fms — %s", name, elapsed_ms, exc)
+                    raise
+            return sync_wrapper
     return decorator
 
 

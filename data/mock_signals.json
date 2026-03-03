@@ -1,0 +1,34 @@
+[
+  {
+    "competitor": "blinkit",
+    "signal_type": "pricing",
+    "description": "Blinkit has cut delivery fees to Rs0 for all orders above Rs99 in Delhi and Gurgaon, effective immediately",
+    "source": "techcrunch.com",
+    "raw_evidence": "Blinkit announces Zero Fee Delhi campaign: free delivery on orders >= Rs99 starting March 2026, targeting SwiftMart core market",
+    "confidence": 9.0
+  },
+  {
+    "competitor": "zepto",
+    "signal_type": "sentiment",
+    "description": "Zepto app experiencing widespread crashes and delivery failures in Bangalore, rating dropped from 4.2 to 3.5 in 2 weeks",
+    "source": "play.google.com/reviews",
+    "raw_evidence": "500+ recent 1-star reviews citing app crashes on checkout, order cancelled without refund, and 45-min delays on 10-min promise in Bangalore",
+    "confidence": 8.5
+  },
+  {
+    "competitor": "zomato",
+    "signal_type": "hiring",
+    "description": "Zomato is hiring 30+ delivery operations managers and city launch specialists specifically for Pune, suggesting imminent Pune quick-commerce entry",
+    "source": "linkedin.com/jobs",
+    "raw_evidence": "Zomato job postings: City Launch Manager Pune, Operations Head Pune Blinkit, Supply Chain Lead West Maharashtra, all posted within 7 days",
+    "confidence": 7.5
+  },
+  {
+    "competitor": "instamart",
+    "signal_type": "pricing",
+    "description": "Swiggy Instamart raises Instamart Plus subscription from Rs99 to Rs179/month, creating a pricing gap that SwiftPass (Rs149/month) can exploit",
+    "source": "businessinsider.in",
+    "raw_evidence": "Swiggy announces Instamart Plus price hike: Rs99/month to Rs179/month from April 2026, citing operational cost normalisation. User backlash visible on Twitter/X.",
+    "confidence": 8.0
+  }
+]

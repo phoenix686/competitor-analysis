@@ -4,6 +4,10 @@ from typing import TypedDict, Annotated
 from langgraph.graph import add_messages
 from langchain_core.messages import BaseMessage
 
+def _merge_node_latencies(left: dict, right: dict) -> dict:
+    """Reducer for node_latencies — merges timing dicts from parallel nodes."""
+    return {**(left or {}), **(right or {})}
+
 
 def _merge_competitor_signals(left: dict, right: dict) -> dict:
     """
@@ -65,3 +69,7 @@ class CompeteIQState(TypedDict):
     # Phase 5: self-correction
     # Number of reflection passes completed (0 = no reflection yet; max 1)
     reflection_count: int
+
+    # Per-node wall-clock latencies in milliseconds (node_name → ms)
+    # Populated by traced_node decorator; merged across parallel sub-agents
+    node_latencies: Annotated[dict, _merge_node_latencies]

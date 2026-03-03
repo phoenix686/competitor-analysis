@@ -1,10 +1,10 @@
 # graph/workflow.py
+import asyncio
 import uuid
 import json
 from langsmith import traceable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode
 from langgraph.types import Send
 
 from agents.state import CompeteIQState
@@ -16,7 +16,6 @@ from utils.observability import traced_node
 from utils.guard import filter_hallucinated_signals
 from prompts.constants import (
     ORCHESTRATOR_SYSTEM,
-    COLLECTOR_SUB_AGENT_SYSTEM,
     COLLECTOR_EXTRACT_SYSTEM,
     ANALYSIS_SYSTEM,
     REFLECTION_SYSTEM,
@@ -24,11 +23,6 @@ from prompts.constants import (
 )
 from memory.episodic import get_recent_runs, format_episodic_context
 from memory.semantic import retrieve_similar, format_semantic_context, upsert_signals
-
-# Tools setup
-tools = [search_competitor, get_app_reviews, get_competitor_jobs]
-tool_node = ToolNode(tools)
-llm_with_tools = llm.bind_tools(tools)
 
 # Structured output LLMs
 llm_collector = llm.with_structured_output(RawSignalList)
@@ -64,65 +58,50 @@ def orchestrator(state: CompeteIQState) -> dict:
 # ---------------------------------------------------------------------------
 @traceable(name="collector_sub_agent", run_type="chain", tags=["competeiq"])
 @traced_node("collector_sub_agent")
-def collector_sub_agent(state: CompeteIQState) -> dict:
+async def collector_sub_agent(state: CompeteIQState) -> dict:
     """
     Handles signal collection for exactly ONE competitor.
     Spawned in parallel by _fan_out_collectors via LangGraph Send().
 
+    Runs all 3 tools concurrently via asyncio.gather() + asyncio.to_thread()
+    then does a single structured-extraction LLM call.
+
     Returns:
       competitor_signals — merged by _merge_competitor_signals reducer
       tool_call_count   — accumulated with operator.add reducer
-      messages          — accumulated with add_messages reducer
     """
     competitor = state.get("current_competitor", "unknown")
 
-    system = SystemMessage(
-        content=COLLECTOR_SUB_AGENT_SYSTEM.format(competitor=competitor)
+    # Run all 3 data sources concurrently in threads (tools are sync)
+    search_q = f"{competitor} pricing delivery fee changes India 2026"
+    raw_results = await asyncio.gather(
+        asyncio.to_thread(search_competitor.invoke, search_q),
+        asyncio.to_thread(get_app_reviews.invoke, {"competitor": competitor}),
+        asyncio.to_thread(get_competitor_jobs.invoke, {"company": competitor.capitalize()}),
+        return_exceptions=True,
     )
-    human = HumanMessage(content=f"Collect competitive intelligence on {competitor}.")
-    messages = [system, human]
 
-    tool_calls_made = 0
-    while True:
-        response = llm_with_tools.invoke(messages)
-        messages.append(response)
+    labels = ["Web search", "App reviews", "Jobs"]
+    parts = []
+    for label, result in zip(labels, raw_results):
+        text = str(result) if not isinstance(result, Exception) else f"error: {result}"
+        parts.append(f"{label}:\n{text[:500]}")
+    all_tool_output = "\n---\n".join(parts)
 
-        if not response.tool_calls:
-            break
-
-        tool_results = tool_node.invoke({"messages": messages})
-        messages.extend(tool_results["messages"])
-        tool_calls_made += len(response.tool_calls)
-
-        if tool_calls_made >= 3:
-            messages.append(HumanMessage(
-                content="You have reached the tool call limit. Stop calling tools now."
-            ))
-            break
-
-    # Extract tool outputs for structured extraction
-    tool_outputs = [
-        str(m.content)[:500]
-        for m in messages
-        if hasattr(m, "content") and m.content and "tool" in type(m).__name__.lower()
-    ]
-    all_tool_output = "\n---\n".join(tool_outputs)
-
-    structured_response = llm_collector.invoke([
+    structured_response = await llm_collector.ainvoke([
         SystemMessage(content=COLLECTOR_EXTRACT_SYSTEM.format(
             min_confidence=MIN_CONFIDENCE_SCORE
         )),
         HumanMessage(content=(
             f"Research collected for {competitor}:\n{all_tool_output[:3000]}"
-        ))
+        )),
     ])
 
     signals = [s.model_dump() for s in structured_response.signals]
 
     return {
         "competitor_signals": {competitor: signals},
-        "tool_call_count": tool_calls_made,
-        "messages": messages,
+        "tool_call_count": 3,
     }
 
 
@@ -199,7 +178,7 @@ def retry_collector(state: CompeteIQState) -> dict:
 # ---------------------------------------------------------------------------
 @traceable(name="analysis_agent", run_type="chain", tags=["competeiq"])
 @traced_node("analysis_agent")
-def analysis_agent(state: CompeteIQState) -> dict:
+async def analysis_agent(state: CompeteIQState) -> dict:
     if not state["raw_signals"]:
         return {"analyzed_signals": []}
 
@@ -207,18 +186,18 @@ def analysis_agent(state: CompeteIQState) -> dict:
     sample_descs = " ".join(
         s.get("description", "") for s in state["raw_signals"][:3]
     )
-    similar = retrieve_similar(sample_descs, k=3)
+    similar = await asyncio.to_thread(retrieve_similar, sample_descs, 3)
     semantic_ctx = format_semantic_context(similar)
 
     # Truncate raw signals to keep total input under 4000 tokens
     raw_json = json.dumps(state["raw_signals"], indent=2)[:3000]
 
-    structured_response = llm_analyzer.invoke([
+    structured_response = await llm_analyzer.ainvoke([
         SystemMessage(content=ANALYSIS_SYSTEM),
         HumanMessage(content=(
             f"Historical context:\n{semantic_ctx}\n\n"
             f"Analyze these signals for SwiftMart:\n{raw_json}"
-        ))
+        )),
     ])
 
     analyzed_signals = [s.model_dump() for s in structured_response.signals]
@@ -230,9 +209,9 @@ def analysis_agent(state: CompeteIQState) -> dict:
 
     errors = list(state.get("errors", [])) + guard_issues
 
-    # Persist to ChromaDB so future runs can retrieve similar signals
+    # Persist to ChromaDB in the background — brief_writer doesn't wait for it
     run_id = state.get("run_id", "unknown")
-    upsert_signals(clean_signals, run_id)
+    asyncio.create_task(asyncio.to_thread(upsert_signals, clean_signals, run_id))
 
     return {"analyzed_signals": clean_signals, "errors": errors}
 
@@ -242,7 +221,7 @@ def analysis_agent(state: CompeteIQState) -> dict:
 # ---------------------------------------------------------------------------
 @traceable(name="reflection_agent", run_type="chain", tags=["competeiq"])
 @traced_node("reflection_agent")
-def reflection_agent(state: CompeteIQState) -> dict:
+async def reflection_agent(state: CompeteIQState) -> dict:
     """
     Triggered when analysis quality is poor (0 signals or vague actions).
     Re-invokes the LLM with a targeted critique to improve the output.
@@ -280,7 +259,7 @@ def reflection_agent(state: CompeteIQState) -> dict:
 
     raw_json = json.dumps(state["raw_signals"], indent=2)[:3000]
 
-    structured_response = llm_analyzer.invoke([
+    structured_response = await llm_analyzer.ainvoke([
         SystemMessage(content=REFLECTION_SYSTEM.format(critique=critique_text)),
         HumanMessage(content=f"Re-analyze these signals for SwiftMart:\n{raw_json}"),
     ])
@@ -293,7 +272,7 @@ def reflection_agent(state: CompeteIQState) -> dict:
     )
 
     run_id = state.get("run_id", "unknown")
-    upsert_signals(clean_signals, run_id)
+    asyncio.create_task(asyncio.to_thread(upsert_signals, clean_signals, run_id))
 
     errors = list(state.get("errors", [])) + guard_issues
 
@@ -379,7 +358,7 @@ def _route_after_analysis(state: CompeteIQState) -> str:
     vague_count = sum(
         1 for s in analyzed if len(s.get("recommended_action", "")) < 30
     )
-    if vague_count > len(analyzed) * 0.5:
+    if vague_count > len(analyzed) * 0.3:
         return "reflection_agent"
 
     return "brief_writer"
