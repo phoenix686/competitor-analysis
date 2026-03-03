@@ -28,11 +28,7 @@ logging.basicConfig(
 )
 
 
-# ---------------------------------------------------------------------------
 # Node timing / error-logging decorator
-# (LangSmith @traceable is applied explicitly in graph/workflow.py above this)
-# ---------------------------------------------------------------------------
-
 def traced_node(name: str):
     """
     Decorator that adds wall-clock latency logging and clean error surfacing
@@ -63,10 +59,7 @@ def traced_node(name: str):
     return decorator
 
 
-# ---------------------------------------------------------------------------
 # Custom metric helpers
-# ---------------------------------------------------------------------------
-
 def compute_run_metrics(state: dict) -> dict[str, Any]:
     """
     Derives a structured metrics dict from final CompeteIQ state.

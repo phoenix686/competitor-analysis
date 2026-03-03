@@ -5,6 +5,7 @@ from langsmith import traceable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Send
 
 from agents.state import CompeteIQState
 from agents.llm import llm
@@ -14,12 +15,12 @@ from config import COMPETITORS, MIN_CONFIDENCE_SCORE
 from utils.observability import traced_node
 from prompts.constants import (
     ORCHESTRATOR_SYSTEM,
-    COLLECTOR_SYSTEM,
+    COLLECTOR_SUB_AGENT_SYSTEM,
     COLLECTOR_EXTRACT_SYSTEM,
     ANALYSIS_SYSTEM,
     BRIEF_SYSTEM,
 )
-from memory.episodic import get_recent_runs, format_episodic_context, save_run
+from memory.episodic import get_recent_runs, format_episodic_context
 from memory.semantic import retrieve_similar, format_semantic_context, upsert_signals
 
 # Tools setup
@@ -32,10 +33,12 @@ llm_collector = llm.with_structured_output(RawSignalList)
 llm_analyzer = llm.with_structured_output(AnalyzedSignalList)
 
 
+# ---------------------------------------------------------------------------
 # NODE 1: Orchestrator
+# ---------------------------------------------------------------------------
 @traceable(name="orchestrator", run_type="chain", tags=["competeiq"])
 @traced_node("orchestrator")
-def orchestrator(state: CompeteIQState) -> CompeteIQState:
+def orchestrator(state: CompeteIQState) -> dict:
     # Pull last 5 run summaries from Redis for context priming
     recent_runs = get_recent_runs(5)
     memory_ctx = format_episodic_context(recent_runs)
@@ -47,27 +50,37 @@ def orchestrator(state: CompeteIQState) -> CompeteIQState:
     ))
     response = llm.invoke([system, human])
     return {
-        **state,
         "messages": [response],
         "run_id": str(uuid.uuid4())[:8],
         "memory_context": memory_ctx,
+        "tool_call_count": 0,
     }
 
 
-# NODE 2: Signal Collector
-# Agentic tool-calling loop
-@traceable(name="signal_collector", run_type="chain", tags=["competeiq"])
-@traced_node("signal_collector")
-def signal_collector(state: CompeteIQState) -> CompeteIQState:
+# ---------------------------------------------------------------------------
+# NODE 2a: Collector Sub-Agent  (one instance per competitor via Send())
+# ---------------------------------------------------------------------------
+@traceable(name="collector_sub_agent", run_type="chain", tags=["competeiq"])
+@traced_node("collector_sub_agent")
+def collector_sub_agent(state: CompeteIQState) -> dict:
+    """
+    Handles signal collection for exactly ONE competitor.
+    Spawned in parallel by _fan_out_collectors via LangGraph Send().
+
+    Returns:
+      competitor_signals — merged by _merge_competitor_signals reducer
+      tool_call_count   — accumulated with operator.add reducer
+      messages          — accumulated with add_messages reducer
+    """
+    competitor = state.get("current_competitor", "unknown")
+
     system = SystemMessage(
-        content=COLLECTOR_SYSTEM.format(competitors=state["competitors"])
+        content=COLLECTOR_SUB_AGENT_SYSTEM.format(competitor=competitor)
     )
-    human = HumanMessage(
-        content=f"Collect all signals for: {state['competitors']}"
-    )
+    human = HumanMessage(content=f"Collect competitive intelligence on {competitor}.")
     messages = [system, human]
 
-    # Agentic tool-calling loop
+    tool_calls_made = 0
     while True:
         response = llm_with_tools.invoke(messages)
         messages.append(response)
@@ -77,48 +90,116 @@ def signal_collector(state: CompeteIQState) -> CompeteIQState:
 
         tool_results = tool_node.invoke({"messages": messages})
         messages.extend(tool_results["messages"])
+        tool_calls_made += len(response.tool_calls)
 
-        # Guardrail: max 8 tool calls
-        tool_call_count = sum(
-            1 for m in messages
-            if hasattr(m, "tool_calls") and m.tool_calls
-        )
-        if tool_call_count >= 8:
+        if tool_calls_made >= 3:
             messages.append(HumanMessage(
-                content="You have gathered enough data. Stop calling tools now."
+                content="You have reached the tool call limit. Stop calling tools now."
             ))
             break
 
-    # Extract structured signals from everything collected
-    tool_outputs = []
-    for m in messages:
-        if hasattr(m, "content") and m.content and hasattr(m, "type") and "tool" in str(type(m).__name__).lower():
-            tool_outputs.append(str(m.content)[:500])  # truncate each tool result
-
+    # Extract tool outputs for structured extraction
+    tool_outputs = [
+        str(m.content)[:500]
+        for m in messages
+        if hasattr(m, "content") and m.content and "tool" in type(m).__name__.lower()
+    ]
     all_tool_output = "\n---\n".join(tool_outputs)
 
     structured_response = llm_collector.invoke([
         SystemMessage(content=COLLECTOR_EXTRACT_SYSTEM.format(
             min_confidence=MIN_CONFIDENCE_SCORE
         )),
-        HumanMessage(content=f"Research collected:\n{all_tool_output[:4000]}")
+        HumanMessage(content=(
+            f"Research collected for {competitor}:\n{all_tool_output[:3000]}"
+        ))
     ])
 
-    raw_signals = [s.model_dump() for s in structured_response.signals]
+    signals = [s.model_dump() for s in structured_response.signals]
 
     return {
-        **state,
+        "competitor_signals": {competitor: signals},
+        "tool_call_count": tool_calls_made,
         "messages": messages,
-        "raw_signals": raw_signals
     }
 
 
+# ---------------------------------------------------------------------------
+# NODE 2b: Aggregator  (merges all sub-agent results, applies confidence gate)
+# ---------------------------------------------------------------------------
+@traceable(name="aggregator", run_type="chain", tags=["competeiq"])
+@traced_node("aggregator")
+def aggregator(state: CompeteIQState) -> dict:
+    """
+    Runs after all collector_sub_agent nodes complete.
+    - Flattens competitor_signals into raw_signals
+    - Drops signals below MIN_CONFIDENCE_SCORE (confidence gate)
+    - Records which competitors yielded zero signals (drives retry logic)
+    """
+    competitor_signals = state.get("competitor_signals", {})
+    all_signals: list[dict] = []
+    zero_coverage: list[str] = []
+
+    for competitor in state["competitors"]:
+        signals = competitor_signals.get(competitor, [])
+        gated = [
+            s for s in signals
+            if float(s.get("confidence", 0)) >= MIN_CONFIDENCE_SCORE
+        ]
+        if not gated:
+            zero_coverage.append(competitor)
+        all_signals.extend(gated)
+
+    errors = list(state.get("errors", []))
+    if zero_coverage:
+        errors.append(
+            f"Zero signals after confidence gate for: {', '.join(zero_coverage)}"
+        )
+
+    return {
+        "raw_signals": all_signals,
+        "errors": errors,
+    }
+
+
+# ---------------------------------------------------------------------------
+# NODE 2c: Retry Collector  (increments retry_count, resets for fresh pass)
+# ---------------------------------------------------------------------------
+@traceable(name="retry_collector", run_type="chain", tags=["competeiq"])
+@traced_node("retry_collector")
+def retry_collector(state: CompeteIQState) -> dict:
+    """
+    Called when at least one competitor yielded zero signals and retry_count < 2.
+    - Increments retry_count
+    - Resets competitor_signals via __reset__ sentinel (see state.py reducer)
+    - Injects a critique HumanMessage so sub-agents know to dig deeper
+    """
+    zero_coverage = [
+        c for c in state["competitors"]
+        if not state.get("competitor_signals", {}).get(c)
+    ]
+    critique = (
+        f"Retry {state.get('retry_count', 0) + 1}: 0 confident signals found for "
+        f"{', '.join(zero_coverage)}. "
+        "Look harder — check pricing changes, delivery fee updates, "
+        "expansion announcements, or recent hiring trends."
+    )
+    return {
+        "retry_count": state.get("retry_count", 0) + 1,
+        # __reset__ sentinel wipes competitor_signals before the fresh fan-out
+        "competitor_signals": {"__reset__": True},
+        "messages": [HumanMessage(content=critique)],
+    }
+
+
+# ---------------------------------------------------------------------------
 # NODE 3: Analysis Agent
+# ---------------------------------------------------------------------------
 @traceable(name="analysis_agent", run_type="chain", tags=["competeiq"])
 @traced_node("analysis_agent")
-def analysis_agent(state: CompeteIQState) -> CompeteIQState:
+def analysis_agent(state: CompeteIQState) -> dict:
     if not state["raw_signals"]:
-        return {**state, "analyzed_signals": []}
+        return {"analyzed_signals": []}
 
     # Build a short query from the first 3 signal descriptions for semantic lookup
     sample_descs = " ".join(
@@ -144,48 +225,118 @@ def analysis_agent(state: CompeteIQState) -> CompeteIQState:
     run_id = state.get("run_id", "unknown")
     upsert_signals(analyzed_signals, run_id)
 
-    return {
-        **state,
-        "analyzed_signals": analyzed_signals
-    }
+    return {"analyzed_signals": analyzed_signals}
 
 
+# ---------------------------------------------------------------------------
 # NODE 4: Brief Writer
+# ---------------------------------------------------------------------------
 @traceable(name="brief_writer", run_type="chain", tags=["competeiq"])
 @traced_node("brief_writer")
-def brief_writer(state: CompeteIQState) -> CompeteIQState:
+def brief_writer(state: CompeteIQState) -> dict:
     response = llm.invoke([
         SystemMessage(content=BRIEF_SYSTEM.format(
             run_id=state.get("run_id", "unknown"),
             competitors=state["competitors"]
         )),
-        HumanMessage(content=f"""
-Write brief from these analyzed signals:
-{json.dumps(state['analyzed_signals'], indent=2)}
-""")
+        HumanMessage(content=(
+            f"Write brief from these analyzed signals:\n"
+            f"{json.dumps(state['analyzed_signals'], indent=2)}"
+        ))
     ])
-
     return {
-        **state,
         "messages": [response],
-        "final_brief": response.content
+        "final_brief": response.content,
     }
 
 
+# ---------------------------------------------------------------------------
+# EDGE FUNCTIONS for parallel fan-out and conditional routing
+# ---------------------------------------------------------------------------
+
+def _fan_out_collectors(state: CompeteIQState) -> list[Send]:
+    """
+    Conditional edge: orchestrator → collector_sub_agent (×N in parallel).
+    Returns one Send per competitor so LangGraph spawns them concurrently.
+    """
+    return [
+        Send("collector_sub_agent", {**state, "current_competitor": c})
+        for c in state["competitors"]
+    ]
+
+
+def _route_after_aggregator(state: CompeteIQState) -> str:
+    """
+    Conditional edge after aggregator.
+    Retry if any competitor has 0 signals AND retry_count < 2.
+    Otherwise proceed to analysis.
+    """
+    competitor_signals = state.get("competitor_signals", {})
+    retry_count = state.get("retry_count", 0)
+
+    zero_coverage = [
+        c for c in state["competitors"]
+        if not competitor_signals.get(c)
+    ]
+
+    if zero_coverage and retry_count < 2:
+        return "retry_collector"
+    return "analysis_agent"
+
+
+def _fan_out_after_retry(state: CompeteIQState) -> list[Send]:
+    """
+    Conditional edge: retry_collector → collector_sub_agent (×N in parallel).
+    Re-fans-out all competitors for a fresh collection pass.
+    """
+    return [
+        Send("collector_sub_agent", {**state, "current_competitor": c})
+        for c in state["competitors"]
+    ]
+
+
+# ---------------------------------------------------------------------------
 # BUILD GRAPH
+# ---------------------------------------------------------------------------
 def build_graph():
     graph = StateGraph(CompeteIQState)
 
-    graph.add_node("orchestrator", orchestrator)
-    graph.add_node("signal_collector", signal_collector)
-    graph.add_node("analysis_agent", analysis_agent)
-    graph.add_node("brief_writer", brief_writer)
+    # Register nodes
+    graph.add_node("orchestrator",        orchestrator)
+    graph.add_node("collector_sub_agent", collector_sub_agent)
+    graph.add_node("aggregator",          aggregator)
+    graph.add_node("retry_collector",     retry_collector)
+    graph.add_node("analysis_agent",      analysis_agent)
+    graph.add_node("brief_writer",        brief_writer)
 
+    # Linear backbone
     graph.add_edge(START, "orchestrator")
-    graph.add_edge("orchestrator", "signal_collector")
-    graph.add_edge("signal_collector", "analysis_agent")
     graph.add_edge("analysis_agent", "brief_writer")
     graph.add_edge("brief_writer", END)
+
+    # Fan-out: orchestrator → parallel sub-agents (one per competitor)
+    graph.add_conditional_edges(
+        "orchestrator",
+        _fan_out_collectors,
+        ["collector_sub_agent"],
+    )
+
+    # All sub-agents converge at aggregator
+    graph.add_edge("collector_sub_agent", "aggregator")
+
+    # After aggregator: retry or proceed to analysis
+    graph.add_conditional_edges(
+        "aggregator",
+        _route_after_aggregator,
+        ["retry_collector", "analysis_agent"],
+    )
+
+    # Retry fan-out: retry_collector → parallel sub-agents → aggregator (loop)
+    graph.add_conditional_edges(
+        "retry_collector",
+        _fan_out_after_retry,
+        ["collector_sub_agent"],
+    )
 
     return graph.compile()
 
