@@ -24,6 +24,7 @@ def run() -> None:
         "retry_count": 0,
         "tool_call_count": 0,
         "current_competitor": "",
+        "reflection_count": 0,
     }
 
     t0 = time.perf_counter()

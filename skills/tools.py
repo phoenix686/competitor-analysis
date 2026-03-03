@@ -1,14 +1,56 @@
 # skills/tools.py
+import logging
 import os
 import httpx
 from langchain_core.tools import tool
 from langchain_tavily import TavilySearch
 from google_play_scraper import reviews, app as get_app_info, Sort
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 from config import ADZUNA_APP_ID, ADZUNA_APP_KEY, ADZUNA_COUNTRY, COMPETITOR_APP_IDS
+
+_log = logging.getLogger("competeiq.tools")
+
+# Shared retry policy — 3 attempts, exponential backoff (1s → 2s → 4s max 8s)
+_retry_kwargs = dict(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    before_sleep=before_sleep_log(_log, logging.WARNING),
+    reraise=True,
+)
 
 # Initialize Tavily search instances
 _web_search = TavilySearch(max_results=5, topic="general")
 
+
+# ---------------------------------------------------------------------------
+# Retry-wrapped inner functions — raise on failure so tenacity can retry
+# ---------------------------------------------------------------------------
+
+@retry(**_retry_kwargs)
+def _tavily_search(query: str):
+    return _web_search.invoke(query)
+
+
+@retry(**_retry_kwargs)
+def _fetch_app_info(app_id: str) -> dict:
+    return get_app_info(app_id, lang="en", country="in")
+
+
+@retry(**_retry_kwargs)
+def _fetch_reviews(app_id: str, count: int) -> tuple:
+    return reviews(app_id, lang="en", country="in", sort=Sort.NEWEST, count=count)
+
+
+@retry(**_retry_kwargs)
+def _fetch_jobs(url: str, params: dict) -> dict:
+    response = httpx.get(url, params=params, timeout=10.0)
+    response.raise_for_status()
+    return response.json()
+
+
+# ---------------------------------------------------------------------------
+# Public LangChain tools — graceful error strings on final failure
+# ---------------------------------------------------------------------------
 
 @tool
 def search_competitor(query: str) -> str:
@@ -22,7 +64,7 @@ def search_competitor(query: str) -> str:
     - 'Zomato Gold subscription price change'
     """
     try:
-        results = _web_search.invoke(query)
+        results = _tavily_search(query)
         return str(results)
     except Exception as e:
         return f"search_error: {str(e)}"
@@ -40,23 +82,17 @@ def get_app_reviews(competitor: str, count: int = 30) -> str:
         return f"error: unknown competitor '{competitor}'. Choose from {list(COMPETITOR_APP_IDS.keys())}"
 
     try:
-        app_data = get_app_info(app_id, lang='en', country='in')
-        current_rating = app_data.get('score', 'unknown')
-        total_ratings = app_data.get('ratings', 'unknown')
+        app_data = _fetch_app_info(app_id)
+        current_rating = app_data.get("score", "unknown")
+        total_ratings = app_data.get("ratings", "unknown")
 
-        review_results, _ = reviews(
-            app_id,
-            lang='en',
-            country='in',
-            sort=Sort.NEWEST,
-            count=count
-        )
+        review_results, _ = _fetch_reviews(app_id, count)
 
         compressed = [
             {
                 "score": r["score"],
                 "content": r["content"][:200],
-                "date": str(r["at"].date()) if r.get("at") else "unknown"
+                "date": str(r["at"].date()) if r.get("at") else "unknown",
             }
             for r in review_results
         ]
@@ -65,7 +101,7 @@ def get_app_reviews(competitor: str, count: int = 30) -> str:
             "competitor": competitor,
             "current_rating": current_rating,
             "total_ratings": total_ratings,
-            "recent_reviews": compressed
+            "recent_reviews": compressed,
         })
 
     except Exception as e:
@@ -94,24 +130,12 @@ def get_competitor_jobs(company: str) -> str:
             "app_key": ADZUNA_APP_KEY,
             "results_per_page": 50,
             "what": company,
-            "content-type": "application/json"
+            "content-type": "application/json",
         }
 
-        response = httpx.get(url, params=params, timeout=10.0)
-        response.raise_for_status()
-        data = response.json()
-
+        data = _fetch_jobs(url, params)
         jobs = data.get("results", [])
 
-        # Filter to actual company jobs only
-        # Replace this line:
-        company_lower = company.lower()
-        filtered = [
-            j for j in jobs
-            if company_lower in j.get("company", {}).get("display_name", "").lower()
-        ]
-
-        # With this:
         company_lower = company.lower()
         filtered = [
             j for j in jobs
@@ -120,22 +144,21 @@ def get_competitor_jobs(company: str) -> str:
                 for word in company_lower.split()
             )
         ]
-        # Compress — title is the key signal, short description for context
+
         compressed = [
             {
                 "title": j.get("title", ""),
                 "description": j.get("description", "")[:150],
-                "created": j.get("created", "")[:10]
+                "created": j.get("created", "")[:10],
             }
             for j in filtered
         ]
 
-        # Group by rough category for easier LLM reasoning
         return str({
             "company": company,
             "total_open_roles": len(filtered),
             "jobs": compressed,
-            "note": "Analyze the distribution of job titles to infer strategic priorities"
+            "note": "Analyze the distribution of job titles to infer strategic priorities",
         })
 
     except Exception as e:

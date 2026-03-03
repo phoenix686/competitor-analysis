@@ -61,3 +61,7 @@ class CompeteIQState(TypedDict):
 
     # Active competitor for the current sub-agent invocation (set by Send())
     current_competitor: str
+
+    # Phase 5: self-correction
+    # Number of reflection passes completed (0 = no reflection yet; max 1)
+    reflection_count: int

@@ -13,11 +13,13 @@ from agents.schema import RawSignalList, AnalyzedSignalList
 from skills.tools import search_competitor, get_app_reviews, get_competitor_jobs
 from config import COMPETITORS, MIN_CONFIDENCE_SCORE
 from utils.observability import traced_node
+from utils.guard import filter_hallucinated_signals
 from prompts.constants import (
     ORCHESTRATOR_SYSTEM,
     COLLECTOR_SUB_AGENT_SYSTEM,
     COLLECTOR_EXTRACT_SYSTEM,
     ANALYSIS_SYSTEM,
+    REFLECTION_SYSTEM,
     BRIEF_SYSTEM,
 )
 from memory.episodic import get_recent_runs, format_episodic_context
@@ -221,11 +223,85 @@ def analysis_agent(state: CompeteIQState) -> dict:
 
     analyzed_signals = [s.model_dump() for s in structured_response.signals]
 
+    # Hallucination guard: remove signals with invalid competitors or assessments
+    clean_signals, guard_issues = filter_hallucinated_signals(
+        analyzed_signals, state["competitors"]
+    )
+
+    errors = list(state.get("errors", [])) + guard_issues
+
     # Persist to ChromaDB so future runs can retrieve similar signals
     run_id = state.get("run_id", "unknown")
-    upsert_signals(analyzed_signals, run_id)
+    upsert_signals(clean_signals, run_id)
 
-    return {"analyzed_signals": analyzed_signals}
+    return {"analyzed_signals": clean_signals, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
+# NODE 3a: Reflection Agent  (Phase 5: self-correction on low-quality analysis)
+# ---------------------------------------------------------------------------
+@traceable(name="reflection_agent", run_type="chain", tags=["competeiq"])
+@traced_node("reflection_agent")
+def reflection_agent(state: CompeteIQState) -> dict:
+    """
+    Triggered when analysis quality is poor (0 signals or vague actions).
+    Re-invokes the LLM with a targeted critique to improve the output.
+    Runs at most once per pipeline execution (reflection_count < 1).
+    """
+    analyzed = state.get("analyzed_signals", [])
+
+    # Build a specific critique
+    critiques: list[str] = []
+    if not analyzed:
+        critiques.append(
+            "The previous analysis produced 0 signals — re-analyze and extract "
+            "at least one signal from the raw data."
+        )
+    else:
+        vague = [
+            s.get("recommended_action", "")
+            for s in analyzed
+            if len(s.get("recommended_action", "")) < 30
+        ]
+        if vague:
+            critiques.append(
+                f"{len(vague)} of {len(analyzed)} signals have vague recommended_actions "
+                f"(under 30 chars). Examples: {vague[:2]}. Make each action specific and "
+                "actionable (e.g. 'Launch Delhi delivery-fee match campaign within 48 hours')."
+            )
+        avg_conf = sum(s.get("confidence", 0) for s in analyzed) / len(analyzed)
+        if avg_conf < 4.0:
+            critiques.append(
+                f"Average confidence is {avg_conf:.1f}/10 — signals appear poorly grounded. "
+                "Only report signals supported by concrete evidence."
+            )
+
+    critique_text = "\n".join(critiques) or "General quality improvement pass."
+
+    raw_json = json.dumps(state["raw_signals"], indent=2)[:3000]
+
+    structured_response = llm_analyzer.invoke([
+        SystemMessage(content=REFLECTION_SYSTEM.format(critique=critique_text)),
+        HumanMessage(content=f"Re-analyze these signals for SwiftMart:\n{raw_json}"),
+    ])
+
+    improved = [s.model_dump() for s in structured_response.signals]
+
+    # Apply hallucination guard to the improved signals too
+    clean_signals, guard_issues = filter_hallucinated_signals(
+        improved, state["competitors"]
+    )
+
+    run_id = state.get("run_id", "unknown")
+    upsert_signals(clean_signals, run_id)
+
+    errors = list(state.get("errors", [])) + guard_issues
+
+    return {
+        "analyzed_signals": clean_signals,
+        "reflection_count": state.get("reflection_count", 0) + 1,
+        "errors": errors,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -251,14 +327,11 @@ def brief_writer(state: CompeteIQState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# EDGE FUNCTIONS for parallel fan-out and conditional routing
+# EDGE FUNCTIONS
 # ---------------------------------------------------------------------------
 
 def _fan_out_collectors(state: CompeteIQState) -> list[Send]:
-    """
-    Conditional edge: orchestrator → collector_sub_agent (×N in parallel).
-    Returns one Send per competitor so LangGraph spawns them concurrently.
-    """
+    """orchestrator → collector_sub_agent (×N in parallel)."""
     return [
         Send("collector_sub_agent", {**state, "current_competitor": c})
         for c in state["competitors"]
@@ -266,33 +339,50 @@ def _fan_out_collectors(state: CompeteIQState) -> list[Send]:
 
 
 def _route_after_aggregator(state: CompeteIQState) -> str:
-    """
-    Conditional edge after aggregator.
-    Retry if any competitor has 0 signals AND retry_count < 2.
-    Otherwise proceed to analysis.
-    """
+    """Retry collection if any competitor has 0 signals and retries remain."""
     competitor_signals = state.get("competitor_signals", {})
     retry_count = state.get("retry_count", 0)
-
     zero_coverage = [
         c for c in state["competitors"]
         if not competitor_signals.get(c)
     ]
-
     if zero_coverage and retry_count < 2:
         return "retry_collector"
     return "analysis_agent"
 
 
 def _fan_out_after_retry(state: CompeteIQState) -> list[Send]:
-    """
-    Conditional edge: retry_collector → collector_sub_agent (×N in parallel).
-    Re-fans-out all competitors for a fresh collection pass.
-    """
+    """retry_collector → collector_sub_agent (×N in parallel)."""
     return [
         Send("collector_sub_agent", {**state, "current_competitor": c})
         for c in state["competitors"]
     ]
+
+
+def _route_after_analysis(state: CompeteIQState) -> str:
+    """
+    Phase 5: reflect if quality is poor AND we haven't reflected yet.
+    Quality is poor when:
+      - 0 analyzed signals, OR
+      - >50% of signals have vague recommended_actions (< 30 chars)
+    Max one reflection pass (reflection_count < 1).
+    """
+    analyzed = state.get("analyzed_signals", [])
+    reflection_count = state.get("reflection_count", 0)
+
+    if reflection_count >= 1:
+        return "brief_writer"
+
+    if not analyzed:
+        return "reflection_agent"
+
+    vague_count = sum(
+        1 for s in analyzed if len(s.get("recommended_action", "")) < 30
+    )
+    if vague_count > len(analyzed) * 0.5:
+        return "reflection_agent"
+
+    return "brief_writer"
 
 
 # ---------------------------------------------------------------------------
@@ -307,35 +397,43 @@ def build_graph():
     graph.add_node("aggregator",          aggregator)
     graph.add_node("retry_collector",     retry_collector)
     graph.add_node("analysis_agent",      analysis_agent)
+    graph.add_node("reflection_agent",    reflection_agent)
     graph.add_node("brief_writer",        brief_writer)
 
     # Linear backbone
     graph.add_edge(START, "orchestrator")
-    graph.add_edge("analysis_agent", "brief_writer")
+    graph.add_edge("reflection_agent", "brief_writer")
     graph.add_edge("brief_writer", END)
 
-    # Fan-out: orchestrator → parallel sub-agents (one per competitor)
+    # Fan-out: orchestrator → parallel sub-agents
     graph.add_conditional_edges(
         "orchestrator",
         _fan_out_collectors,
         ["collector_sub_agent"],
     )
 
-    # All sub-agents converge at aggregator
+    # Sub-agents converge at aggregator
     graph.add_edge("collector_sub_agent", "aggregator")
 
-    # After aggregator: retry or proceed to analysis
+    # After aggregator: retry collection or proceed to analysis
     graph.add_conditional_edges(
         "aggregator",
         _route_after_aggregator,
         ["retry_collector", "analysis_agent"],
     )
 
-    # Retry fan-out: retry_collector → parallel sub-agents → aggregator (loop)
+    # Retry fan-out loop
     graph.add_conditional_edges(
         "retry_collector",
         _fan_out_after_retry,
         ["collector_sub_agent"],
+    )
+
+    # After analysis: reflect if quality poor, else write brief
+    graph.add_conditional_edges(
+        "analysis_agent",
+        _route_after_analysis,
+        ["reflection_agent", "brief_writer"],
     )
 
     return graph.compile()

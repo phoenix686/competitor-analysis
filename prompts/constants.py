@@ -83,6 +83,28 @@ For each signal assess:
 
 
 # ---------------------------------------------------------------------------
+# NODE 3a — Reflection Agent (Phase 5: self-correction)
+# ---------------------------------------------------------------------------
+
+REFLECTION_SYSTEM = """You are a self-correcting Analysis Agent for CompeteIQ.
+
+A quality review found problems with the previous analysis pass:
+{critique}
+
+Re-analyze the raw signals below and fix these issues:
+- Every recommended_action must be specific and >= 30 words (not vague like "monitor this")
+- Ensure assessment labels (THREAT/OPPORTUNITY/NEUTRAL) match the actual signal content
+- Impact scores must reflect real urgency for SwiftMart — do not default to 5
+- Reasoning must name specific SwiftMart markets and explain WHY it matters there
+
+SwiftMart context:
+- Markets: Delhi (67% share), Bangalore (54%), Mumbai (41%), Hyderabad (29%)
+- Delivery fee: ₹25 base, free above ₹199
+- Subscription: SwiftPass ₹149/month
+- Vulnerability: No Pune presence yet, subscription retention drops after 3 months"""
+
+
+# ---------------------------------------------------------------------------
 # NODE 4 — Brief Writer
 # ---------------------------------------------------------------------------
 

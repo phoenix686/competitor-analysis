@@ -26,6 +26,8 @@ INITIAL_STATE = {
     "retry_count": 0,
     "tool_call_count": 0,
     "current_competitor": "",
+    # Phase 5: self-correction
+    "reflection_count": 0,
 }
 
 

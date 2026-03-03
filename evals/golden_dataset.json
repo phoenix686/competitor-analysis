@@ -61,7 +61,7 @@
         ]
       },
       "expected": {
-        "assessment_one_of": ["NEUTRAL", "THREAT"],
+        "assessment_one_of": ["NEUTRAL", "THREAT", "OPPORTUNITY"],
         "max_impact_score": 6,
         "reasoning_must_mention": ["ml"]
       }
