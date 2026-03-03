@@ -8,6 +8,7 @@ Groq's 12k TPM rate limit; all 7 tests share that single result.
 Run with:
     uv run pytest tests/test_graph_replay.py -v
 """
+import asyncio
 import pytest
 from harness.replay import ReplayHarness
 from graph.workflow import competeiq_graph
@@ -38,10 +39,11 @@ def graph_result():
     """
     Run the full graph exactly once and share the result across all tests.
     module scope keeps us within Groq's TPM limit.
+    Uses ainvoke() to match the async nodes in workflow.py.
     """
     harness = ReplayHarness()
     with harness.patch_tools():
-        return competeiq_graph.invoke(INITIAL_STATE)
+        return asyncio.run(competeiq_graph.ainvoke(INITIAL_STATE))
 
 
 def test_graph_produces_raw_signals(graph_result):
