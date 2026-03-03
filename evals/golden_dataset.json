@@ -1,0 +1,91 @@
+{
+  "version": "1.0",
+  "description": "Golden dataset for CompeteIQ Analysis Agent evals. Each test case feeds raw_signals into the analysis agent and asserts on the output.",
+  "test_cases": [
+    {
+      "id": "tc_001",
+      "description": "Blinkit zero-delivery-fee launch in Delhi — clear THREAT to SwiftMart's core market",
+      "input": {
+        "raw_signals": [
+          {
+            "competitor": "blinkit",
+            "signal_type": "pricing",
+            "description": "Blinkit has cut delivery fees to ₹0 for all orders above ₹99 in Delhi, effective immediately",
+            "source": "techcrunch.com",
+            "raw_evidence": "Blinkit announces 'Zero Fee Delhi' campaign: free delivery on orders ≥ ₹99 starting March 2026",
+            "confidence": 9.0
+          }
+        ]
+      },
+      "expected": {
+        "assessment": "THREAT",
+        "affected_markets_contains": ["delhi"],
+        "min_impact_score": 7,
+        "reasoning_must_mention": ["delivery fee", "delhi"]
+      }
+    },
+    {
+      "id": "tc_002",
+      "description": "Zepto struggling in Pune — no presence there yet, opening for SwiftMart to enter first",
+      "input": {
+        "raw_signals": [
+          {
+            "competitor": "zepto",
+            "signal_type": "news",
+            "description": "Zepto has withdrawn from Pune citing high logistics costs, leaving the quick-commerce market in Pune without a major player",
+            "source": "economictimes.com",
+            "raw_evidence": "Zepto confirms exit from Pune operations: 'unit economics not viable at current scale'",
+            "confidence": 8.5
+          }
+        ]
+      },
+      "expected": {
+        "assessment": "OPPORTUNITY",
+        "min_impact_score": 6,
+        "reasoning_must_mention": ["pune"]
+      }
+    },
+    {
+      "id": "tc_003",
+      "description": "Zomato hiring ML engineers for recommendation engine — low urgency signal",
+      "input": {
+        "raw_signals": [
+          {
+            "competitor": "zomato",
+            "signal_type": "hiring",
+            "description": "Zomato is hiring 15 ML engineers to improve their food recommendation and ETA prediction engine",
+            "source": "linkedin.com",
+            "raw_evidence": "Zomato job posting: 'Senior ML Engineer — Recommendations & ETA', 15 open roles",
+            "confidence": 7.0
+          }
+        ]
+      },
+      "expected": {
+        "assessment_one_of": ["NEUTRAL", "THREAT"],
+        "max_impact_score": 6,
+        "reasoning_must_mention": ["ml"]
+      }
+    },
+    {
+      "id": "tc_004",
+      "description": "Amazon Fresh launching ₹99/month ultra-low subscription tier — multi-market THREAT",
+      "input": {
+        "raw_signals": [
+          {
+            "competitor": "amazon_fresh",
+            "signal_type": "pricing",
+            "description": "Amazon Fresh launches 'Fresh Basic' subscription at ₹99/month across all metros, underpricing SwiftPass by ₹50",
+            "source": "businessinsider.in",
+            "raw_evidence": "Amazon India announces Fresh Basic: ₹99/month subscription, free delivery on every order, all cities",
+            "confidence": 9.5
+          }
+        ]
+      },
+      "expected": {
+        "assessment": "THREAT",
+        "min_impact_score": 8,
+        "reasoning_must_mention": ["subscription", "swiftpass"]
+      }
+    }
+  ]
+}
