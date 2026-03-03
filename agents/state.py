@@ -52,6 +52,10 @@ class CompeteIQState(TypedDict):
     # Memory context injected by Orchestrator (episodic + semantic summaries)
     memory_context: str
 
+    # Market Momentum summary produced by context_manager node
+    # Injected into collector extraction and analysis prompts
+    momentum_summary: str
+
     # Phase 3: Parallel fan-out state
     # Per-competitor raw signals accumulated from parallel sub-agents
     # Uses custom reducer to merge concurrent sub-agent outputs

@@ -1,4 +1,5 @@
 # main.py
+import argparse
 import asyncio
 import time
 from graph.workflow import competeiq_graph
@@ -20,6 +21,7 @@ async def run() -> None:
         "run_id": "",
         "errors": [],
         "memory_context": "",
+        "momentum_summary": "",
         # Phase 3: parallel fan-out state
         "competitor_signals": {},
         "retry_count": 0,
@@ -56,9 +58,49 @@ async def run() -> None:
 
     metrics = compute_run_metrics(result)
     metrics["latency_ms"] = round(latency_ms, 1)
+
+    inp  = metrics.get("total_input_tokens", 0)
+    out  = metrics.get("total_output_tokens", 0)
+    cost = metrics.get("estimated_cost_usd", 0.0)
+    if inp or out:
+        print(f"\nToken usage:")
+        print(f"  Input tokens    : {inp:,}")
+        print(f"  Output tokens   : {out:,}")
+        print(f"  Estimated cost  : ${cost:.4f} USD")
+
     saved = save_run(metrics)
     print("Run saved to episodic memory (Redis)" if saved else "Episodic memory skipped (Redis unavailable)")
 
 
+async def _scheduled_loop() -> None:
+    """Run the pipeline every 6 hours using APScheduler."""
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run, "interval", hours=6, id="competeiq_run")
+    scheduler.start()
+    print("Scheduler started — pipeline runs every 6 hours. Press Ctrl+C to stop.\n")
+
+    # Fire immediately on startup so we don't wait 6 hours for the first run
+    await run()
+
+    try:
+        await asyncio.Event().wait()   # block until KeyboardInterrupt
+    except (KeyboardInterrupt, SystemExit):
+        scheduler.shutdown()
+        print("\nScheduler stopped.")
+
+
 if __name__ == "__main__":
-    asyncio.run(run())
+    parser = argparse.ArgumentParser(description="CompeteIQ competitive intelligence agent")
+    parser.add_argument(
+        "--schedule",
+        action="store_true",
+        help="Run the pipeline every 6 hours (fires once immediately on startup)",
+    )
+    args = parser.parse_args()
+
+    if args.schedule:
+        asyncio.run(_scheduled_loop())
+    else:
+        asyncio.run(run())

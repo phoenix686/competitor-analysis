@@ -22,6 +22,7 @@ INITIAL_STATE = {
     "run_id": "",
     "errors": [],
     "memory_context": "",
+    "momentum_summary": "",
     # Phase 3: parallel fan-out state
     "competitor_signals": {},
     "retry_count": 0,

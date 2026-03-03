@@ -10,7 +10,7 @@ from langgraph.types import Send
 from agents.state import CompeteIQState
 from agents.llm import llm
 from agents.schema import RawSignalList, AnalyzedSignalList
-from skills.tools import search_competitor, get_app_reviews, get_competitor_jobs
+from skills.mcp_client import get_mcp_tools
 from config import COMPETITORS, MIN_CONFIDENCE_SCORE
 from utils.observability import traced_node
 from utils.guard import filter_hallucinated_signals
@@ -23,6 +23,7 @@ from prompts.constants import (
 )
 from memory.episodic import get_recent_runs, format_episodic_context
 from memory.semantic import retrieve_similar, format_semantic_context, upsert_signals
+from memory.context_manager import get_last_n_runs, compress_to_momentum_summary
 
 # Structured output LLMs
 llm_collector = llm.with_structured_output(RawSignalList)
@@ -54,6 +55,22 @@ def orchestrator(state: CompeteIQState) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# NODE 1b: Context Manager  (runs after orchestrator, before fan-out)
+# ---------------------------------------------------------------------------
+@traceable(name="context_manager", run_type="chain", tags=["competeiq"])
+@traced_node("context_manager")
+def context_manager(_state: CompeteIQState) -> dict:
+    """
+    Pulls last 10 runs from Redis and distils them into a Market Momentum
+    summary via LLM. The summary is injected into both the collector extraction
+    prompt and the analysis prompt so downstream nodes are aware of trends.
+    """
+    runs = get_last_n_runs(10)
+    momentum = compress_to_momentum_summary(runs)
+    return {"momentum_summary": momentum}
+
+
+# ---------------------------------------------------------------------------
 # NODE 2a: Collector Sub-Agent  (one instance per competitor via Send())
 # ---------------------------------------------------------------------------
 @traceable(name="collector_sub_agent", run_type="chain", tags=["competeiq"])
@@ -72,12 +89,19 @@ async def collector_sub_agent(state: CompeteIQState) -> dict:
     """
     competitor = state.get("current_competitor", "unknown")
 
-    # Run all 3 data sources concurrently in threads (tools are sync)
+    # Resolve MCP (or fallback) tools — cached after first call
+    tools = await get_mcp_tools()
+    tool_map = {t.name: t for t in tools}
+    search_tool  = tool_map["search_competitor"]
+    reviews_tool = tool_map["get_app_reviews"]
+    jobs_tool    = tool_map["get_competitor_jobs"]
+
+    # Run all 3 data sources concurrently via MCP ainvoke
     search_q = f"{competitor} pricing delivery fee changes India 2026"
     raw_results = await asyncio.gather(
-        asyncio.to_thread(search_competitor.invoke, search_q),
-        asyncio.to_thread(get_app_reviews.invoke, {"competitor": competitor}),
-        asyncio.to_thread(get_competitor_jobs.invoke, {"company": competitor.capitalize()}),
+        search_tool.ainvoke(search_q),
+        reviews_tool.ainvoke({"competitor": competitor}),
+        jobs_tool.ainvoke({"company": competitor.capitalize()}),
         return_exceptions=True,
     )
 
@@ -88,9 +112,11 @@ async def collector_sub_agent(state: CompeteIQState) -> dict:
         parts.append(f"{label}:\n{text[:500]}")
     all_tool_output = "\n---\n".join(parts)
 
+    momentum = state.get("momentum_summary", "No historical momentum data available.")
     structured_response = await llm_collector.ainvoke([
         SystemMessage(content=COLLECTOR_EXTRACT_SYSTEM.format(
-            min_confidence=MIN_CONFIDENCE_SCORE
+            min_confidence=MIN_CONFIDENCE_SCORE,
+            momentum_summary=momentum,
         )),
         HumanMessage(content=(
             f"Research collected for {competitor}:\n{all_tool_output[:3000]}"
@@ -192,8 +218,9 @@ async def analysis_agent(state: CompeteIQState) -> dict:
     # Truncate raw signals to keep total input under 4000 tokens
     raw_json = json.dumps(state["raw_signals"], indent=2)[:3000]
 
+    momentum = state.get("momentum_summary", "No historical momentum data available.")
     structured_response = await llm_analyzer.ainvoke([
-        SystemMessage(content=ANALYSIS_SYSTEM),
+        SystemMessage(content=ANALYSIS_SYSTEM.format(momentum_summary=momentum)),
         HumanMessage(content=(
             f"Historical context:\n{semantic_ctx}\n\n"
             f"Analyze these signals for SwiftMart:\n{raw_json}"
@@ -372,6 +399,7 @@ def build_graph():
 
     # Register nodes
     graph.add_node("orchestrator",        orchestrator)
+    graph.add_node("context_manager",     context_manager)
     graph.add_node("collector_sub_agent", collector_sub_agent)
     graph.add_node("aggregator",          aggregator)
     graph.add_node("retry_collector",     retry_collector)
@@ -381,12 +409,13 @@ def build_graph():
 
     # Linear backbone
     graph.add_edge(START, "orchestrator")
+    graph.add_edge("orchestrator", "context_manager")
     graph.add_edge("reflection_agent", "brief_writer")
     graph.add_edge("brief_writer", END)
 
-    # Fan-out: orchestrator → parallel sub-agents
+    # Fan-out: context_manager → parallel sub-agents (momentum injected into state)
     graph.add_conditional_edges(
-        "orchestrator",
+        "context_manager",
         _fan_out_collectors,
         ["collector_sub_agent"],
     )

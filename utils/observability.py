@@ -116,6 +116,22 @@ def compute_run_metrics(state: dict) -> dict[str, Any]:
         if hasattr(m, "tool_calls") and isinstance(m.tool_calls, list) and m.tool_calls
     )
 
+    # Token usage — Groq returns usage in response_metadata["token_usage"]
+    total_input_tokens  = 0
+    total_output_tokens = 0
+    for m in messages:
+        meta = getattr(m, "response_metadata", None) or {}
+        usage = meta.get("token_usage") or meta.get("usage") or {}
+        total_input_tokens  += usage.get("prompt_tokens", 0)
+        total_output_tokens += usage.get("completion_tokens", 0)
+
+    # Groq llama-3.3-70b pricing: $0.59 / 1M input, $0.79 / 1M output
+    _INPUT_CPM  = 0.59 / 1_000_000
+    _OUTPUT_CPM = 0.79 / 1_000_000
+    estimated_cost_usd = round(
+        total_input_tokens * _INPUT_CPM + total_output_tokens * _OUTPUT_CPM, 6
+    )
+
     return {
         "run_id":               state.get("run_id", "unknown"),
         "signals_collected":    len(raw),
@@ -129,4 +145,7 @@ def compute_run_metrics(state: dict) -> dict[str, Any]:
         "retry_count":          state.get("retry_count", 0),
         "failed_tools":         state.get("failed_tools", []),
         "tool_calls":           state.get("tool_call_count", tool_calls_total),
+        "total_input_tokens":   total_input_tokens,
+        "total_output_tokens":  total_output_tokens,
+        "estimated_cost_usd":   estimated_cost_usd,
     }

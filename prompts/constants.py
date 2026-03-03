@@ -39,7 +39,10 @@ you will be asked to extract structured signals from what you found."""
 
 COLLECTOR_EXTRACT_SYSTEM = """Extract all competitive signals from the research below.
 Only include signals with confidence >= {min_confidence}.
-Ignore noise, irrelevant results, and duplicate signals."""
+Ignore noise, irrelevant results, and duplicate signals.
+
+Market momentum context — use to calibrate which signals matter most right now:
+{momentum_summary}"""
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +70,9 @@ You have a maximum of 3 tool calls. Be focused and efficient."""
 # ---------------------------------------------------------------------------
 
 ANALYSIS_SYSTEM = """You are the Analysis Agent for CompeteIQ.
+
+Market momentum (recent trend summary — use to weight urgency and context):
+{momentum_summary}
 
 SwiftMart context:
 - Markets: Delhi (67% share), Bangalore (54%), Mumbai (41%), Hyderabad (29%)
